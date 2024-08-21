@@ -31,7 +31,7 @@ response <- GET(bfs_url)
 data <- content(response, as = "parsed", type = "application/json")
 ```
 
-# Fonction de récupération des communes
+# Fonction de récupération des données des communes
 
 ```{r}
 
@@ -86,7 +86,7 @@ get_BFS_municipalities_results <- function(data) {
 # df_bfs <- get_BFS_municipalities_results(data)
 ```
 
-# Fonction de récupération des cantons
+# Fonction de récupération des données des cantons
 
 ```{r}
 
@@ -131,7 +131,7 @@ get_BFS_cantons_results <- function(data) {
 df_cantons <- get_BFS_cantons_results(data)
 ```
 
-# Fonction de récupération des districts
+# Fonction de récupération des données des districts
 
 ```{r}
 
