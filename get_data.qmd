@@ -1,0 +1,180 @@
+---
+title: "get_data"
+author: "Olaf König"
+format: html
+editor: visual
+---
+
+# Libraries
+
+```{r}
+
+library(jsonlite)
+library(purrr)
+library(tidyverse)
+library(tidylog)
+library(httr)
+```
+
+# URL et chargement du JSON
+
+```{r}
+
+
+bfs_url <- "https://dam-api.bfs.admin.ch/hub/api/dam/assets/32071631/master"
+
+# Votation du 3 mars 2024
+# bfs_url <- "https://ogd-static.voteinfo-app.ch/v1/ogd/sd-t-17-02-20240303-kantAbstimmung.json"
+
+response <- GET(bfs_url)
+
+data <- content(response, as = "parsed", type = "application/json")
+```
+
+# Fonction de récupération des communes
+
+```{r}
+
+get_BFS_municipalities_results <- function(data) {
+  bfs_results <- list()
+  
+  for (ballot in data$schweiz$vorlagen) {
+    for (canton in ballot$kantone) {
+      for (commune in canton$gemeinden) {
+        ballot_name <- NULL
+        for (title in ballot$vorlagenTitel) {
+          if (title$langKey == "fr") {
+            ballot_name <- title$text
+            break
+          }
+        }
+        commune_data <- c(
+          id = commune$geoLevelnummer,
+          name = commune$geoLevelname,
+          canton_id = canton$geoLevelnummer,
+          canton_name = canton$geoLevelname,
+          ballot_id = ballot$vorlagenId,
+          ballot_name = ballot_name,
+          commune$resultat
+        )
+        bfs_results <- append(bfs_results, list(commune_data))
+      }
+    }
+  }
+  
+  df_bfs <- bind_rows(bfs_results)
+  
+  df_bfs <- df_bfs %>%
+    rename(
+      yes_pct = jaStimmenInProzent,
+      yes = jaStimmenAbsolut,
+      no = neinStimmenAbsolut,
+      turnout = stimmbeteiligungInProzent,
+      ballots_returned = eingelegteStimmzettel,
+      voters = anzahlStimmberechtigte,
+      valid_votes = gueltigeStimmen
+    ) %>%
+    select(-gebietAusgezaehlt)
+  
+  return(df_bfs)
+}
+```
+
+```{r}
+
+# Utilisation de la fonction
+# df_bfs <- get_BFS_municipalities_results(data)
+```
+
+# Fonction de récupération des cantons
+
+```{r}
+
+get_BFS_cantons_results <- function(data) {
+  cantons <- list()
+  
+  for (ballot in data$schweiz$vorlagen) {
+    for (canton in ballot$kantone) {
+      ballot_name <- sapply(ballot$vorlagenTitel, function(title) {
+        if (title$langKey == 'fr') return(title$text)
+      })
+      ballot_name <- unlist(ballot_name)
+      
+      cantons <- append(cantons, list(data.frame(
+        id = canton$geoLevelnummer,
+        name = canton$geoLevelname,
+        canton_id = canton$geoLevelnummer,
+        canton_name = canton$geoLevelname,
+        ballot_id = ballot$vorlagenId,
+        ballot_name = ballot_name,
+        yes = canton$resultat$jaStimmenAbsolut,
+        no = canton$resultat$neinStimmenAbsolut,
+        yes_pct = canton$resultat$jaStimmenInProzent,
+        turnout = canton$resultat$stimmbeteiligungInProzent,
+        ballots_returned = canton$resultat$eingelegteStimmzettel,
+        voters = canton$resultat$anzahlStimmberechtigte,
+        valid_votes = canton$resultat$gueltigeStimmen
+      )))
+    }
+  }
+  
+  df_cantons <- do.call(rbind, cantons)
+  df_cantons <- as.data.frame(df_cantons)
+  
+  return(df_cantons)
+}
+```
+
+```{r}
+
+# Utilisation de la fonction
+df_cantons <- get_BFS_cantons_results(data)
+```
+
+# Fonction de récupération des districts
+
+```{r}
+
+get_BFS_districts_results <- function(data) {
+  districts <- list()
+  
+  for (ballot in data$schweiz$vorlagen) {
+    for (canton in ballot$kantone) {
+      for (district in canton$bezirke) {
+        ballot_name <- sapply(ballot$vorlagenTitel, function(title) {
+          if (title$langKey == 'fr') return(title$text)
+        })
+        ballot_name <- unlist(ballot_name)
+        
+        districts <- append(districts, list(data.frame(
+          id = district$geoLevelnummer,
+          name = district$geoLevelname,
+          canton_id = canton$geoLevelnummer,
+          canton_name = canton$geoLevelname,
+          ballot_id = ballot$vorlagenId,
+          ballot_name = ballot_name,
+          yes = district$resultat$jaStimmenAbsolut,
+          no = district$resultat$neinStimmenAbsolut,
+          yes_pct = district$resultat$jaStimmenInProzent,
+          turnout = district$resultat$stimmbeteiligungInProzent,
+          ballots_returned = district$resultat$eingelegteStimmzettel,
+          voters = district$resultat$anzahlStimmberechtigte,
+          valid_votes = district$resultat$gueltigeStimmen
+        )))
+      }
+    }
+  }
+  
+  df_districts <- do.call(rbind, districts)
+  df_districts <- as.data.frame(df_districts)
+  
+  return(df_districts)
+}
+
+```
+
+```{r}
+
+# Utilisation de la fonction
+df_districts <- get_BFS_districts_results(data)
+```
