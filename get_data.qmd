@@ -1,7 +1,19 @@
 ---
 title: "get_data"
 author: "Olaf König"
-format: html
+format: 
+  html:
+    self-contained: TRUE
+    page-layout: full
+    toc: true
+    toc-depth: 4
+    number-sections: true
+    number-depth: 4
+    code-line-numbers: true
+    code-fold: true
+execute:
+  warning: false
+theme: cosmo 
 editor: visual
 ---
 
@@ -14,9 +26,17 @@ library(purrr)
 library(tidyverse)
 library(tidylog)
 library(httr)
+library(stringr)
+
 ```
 
-# URL et chargement du JSON
+# Données votations
+
+Les données par date de votations peuvent être trouvées sous:
+
+<https://opendata.swiss/fr/dataset/echtzeitdaten-am-abstimmungstag-zu-eidgenoessischen-abstimmungsvorlagen>
+
+## URL et chargement du JSON
 
 ```{r}
 
@@ -31,7 +51,7 @@ response <- GET(bfs_url)
 data <- content(response, as = "parsed", type = "application/json")
 ```
 
-# Fonction "get_data_votes" qui reprend les données communales, des districts et des cantons
+## Fonction "get_data_votes" qui reprend les données communales, des districts et des cantons
 
 ```{r}
 
@@ -176,7 +196,7 @@ get_data_votes <- function(data) {
 
 ```
 
-# Appel de la fonction
+## Appel de la fonction
 
 ```{r}
 
@@ -186,4 +206,28 @@ resultats_votes <- get_data_votes(data)
 df_municipalities <- resultats_votes$df_municipalities
 df_cantons <- resultats_votes$df_cantons
 df_districts <- resultats_votes$df_districts
+```
+
+# Données division spatiales
+
+## Fonction de requête Application des communes
+
+```{r}
+
+library(stringr)
+library(readr)
+
+get_geolevel <- function(date1) {
+  # Construire l'URL et lire les données
+  url <- str_c("https://sms.bfs.admin.ch/WcfBFSSpecificService.svc/AnonymousRest/communes/levels?startPeriod=", date1, "&endPeriod=", date1, "&useBfsCode=false&labelLanguages=fr&format=csv")
+  result <- read_csv(url)
+  
+  # Exporter les données en CSV avec la date dans le nom de fichier
+  write_csv(result, str_c("data_input/spatial_division_", str_replace_all(date1, "-", "_"), ".csv"))
+  
+  return(result)
+}
+
+# Utilisation de la fonction
+spatial_index <- get_geolevel("2024-03-01")
 ```
