@@ -1,0 +1,82 @@
+---
+title: "get_spatial_division"
+author: "Olaf König"
+format: 
+  html:
+    self-contained: TRUE
+    page-layout: full
+    toc: true
+    toc-depth: 4
+    number-sections: true
+    number-depth: 4
+    code-line-numbers: true
+    code-fold: true
+execute:
+  warning: false
+theme: cosmo 
+editor: visual
+---
+
+# Libraries
+
+```{r}
+
+library(tidyverse)
+library(tidylog)
+library(readr)
+
+```
+
+# Data import
+
+Fonction de l'import
+
+```{r}
+
+import_selected_files <- function(directory) {
+  # Lister les fichiers dans le répertoire
+  files <- list.files(path = directory, pattern = "\\.csv$", full.names = TRUE)
+  
+  # Afficher la liste des fichiers
+  cat("Fichiers disponibles :\n")
+  for (i in seq_along(files)) {
+    cat(i, ": ", basename(files[i]), "\n")
+  }
+  
+  # Demander à l'utilisateur de sélectionner un ou plusieurs fichiers
+  selections <- readline(prompt = "Sélectionnez un ou plusieurs fichiers (numéros séparés par des virgules (avec espace), sans guillemets) : ")
+  
+  # Convertir la sélection en un vecteur numérique
+  selection_indices <- suppressWarnings(as.numeric(unlist(strsplit(selections, ","))))
+  
+  # Vérifier la sélection
+  if (any(is.na(selection_indices)) || any(selection_indices < 1) || any(selection_indices > length(files))) {
+    stop("Sélection invalide. Veuillez saisir des numéros valides, sans guillemets ni autres caractères.")
+  }
+  
+  # Importer les fichiers sélectionnés et créer des objets
+  imported_objects <- list()
+  for (i in selection_indices) {
+    selected_file <- files[i]
+    file_name <- tools::file_path_sans_ext(basename(selected_file))
+    
+    # Importer le fichier et assigner l'objet
+    assign(file_name, read_csv(selected_file), envir = .GlobalEnv)
+    
+    # Ajouter le nom de l'objet à la liste
+    imported_objects[[file_name]] <- get(file_name)
+  }
+  
+  # Retourner la liste des objets importés
+  return(imported_objects)
+}
+
+```
+
+Appel de la fonction
+
+```{r}
+# Utilisation de la fonction
+# Assurez-vous de spécifier le bon répertoire
+objets_importes <- import_selected_files("data_input")
+```
