@@ -143,10 +143,21 @@ df_votes_pesticide <- df_votes_2021_06_13_municipalities %>%
   split(
     .$ballot_id
   )
-  
 ```
 
-## Visualisation
+## Création des objets SF avec les votations
+
+```{r}
+
+votes_pesticide_antibiotique_sf <- g1g24_sf %>% 
+  left_join(df_votes_pesticide$`6410`, by = c("GMDNR" = "id"))
+
+
+votes_pesticide_synthese_sf <- g1g24_sf %>% 
+  left_join(df_votes_pesticide$`6420`, by = c("GMDNR" = "id"))
+```
+
+# Visualisation sous forme de beeswarm
 
 Test avec d3
 
@@ -213,4 +224,108 @@ plotly_test <- ggplotly(beeswarm_test_1, tooltip = "text")
 
 plotly_test
 
+```
+
+# Visualisation sous forme de cartes (mapview)
+
+```{r}
+
+library(RColorBrewer)
+
+# Définir les breaks à des intervalles de 10 %
+breaks <- seq(0, 100, by = 10)
+# Utilisation de la palette PRGn avec 10 couleurs
+palette_colors <- brewer.pal(11, "PRGn")
+
+```
+
+### Carte d'ensemble
+
+```{r}
+
+mapview(votes_pesticide_antibiotique_sf, 
+          zcol = "yes_pct",
+        at = breaks, 
+        col.regions = palette_colors)
+```
+
+### Carte région urbaine
+
+```{r}
+
+votes_pesticide_antibiotique_sf %>% 
+  filter(HR_GDETYP2012_L1 == 1) %>% 
+  mapview(zcol = "yes_pct",
+        at = breaks, 
+        col.regions = palette_colors)
+```
+
+### Carte région intermédiaire
+
+```{r}
+
+votes_pesticide_antibiotique_sf %>% 
+  filter(HR_GDETYP2012_L1 == 2) %>% 
+  mapview(zcol = "yes_pct",
+        at = breaks, 
+        col.regions = palette_colors)
+```
+
+### Carte région rurale
+
+```{r}
+
+votes_pesticide_antibiotique_sf %>% 
+  filter(HR_GDETYP2012_L1 == 3) %>% 
+  mapview(zcol = "yes_pct",
+        at = breaks, 
+        col.regions = palette_colors)
+```
+
+# Visualisation sous forme de cartes (tmap)
+
+### En carte choroplèthe
+
+```{r}
+
+library(tmap)
+
+# Créer la carte avec tmap en utilisant small multiples (facets)
+tm <- tm_shape(votes_pesticide_antibiotique_sf %>% 
+                 filter(!is.na(yes_pct))) + 
+  tm_polygons("yes_pct", 
+              breaks = breaks, 
+              palette = palette_colors) + 
+  tm_facets(by = "HR_GDETYP2012_L1", 
+            free.scales = FALSE, 
+            ncol = 1) + 
+  tm_layout(main.title = "Votes Pesticides et Antibiotiques par Degré d'Urbanité", 
+            legend.outside = TRUE)
+
+# Afficher la carte
+tmap_mode("view") # Utiliser "plot" / "view" pour une carte statique
+tm
+```
+
+### En cercles proportionnels
+
+```{r}
+
+tm <- tm_shape(votes_pesticide_antibiotique_sf %>% 
+                  filter(!is.na(yes_pct))) + 
+  tm_bubbles(size = "voters",     # Taille des cercles proportionnelle à 'yes_pct'
+             col = "yes_pct",      # Couleur des cercles en fonction de 'yes_pct'
+             breaks = breaks, 
+             palette = palette_colors,
+             scale = 2,            # Échelle des cercles
+             border.col = "black", # Couleur de bordure des cercles
+             style = "fixed") +    # Utilisation des breaks fixes
+  tm_facets(by = "HR_GDETYP2012_L1", 
+            free.scales = FALSE, 
+            ncol = 1) + 
+  tm_layout(main.title = "Votes Pesticides et Antibiotiques par Degré d'Urbanité avec Cercles Proportionnels", 
+            legend.outside = TRUE)
+
+# Afficher la carte
+tm
 ```
