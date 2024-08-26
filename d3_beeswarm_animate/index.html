@@ -1,0 +1,67 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Graphique D3.js Interactif</title>
+    <!-- Inclure la police IBM Plex Sans -->
+    <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;600;700&display=swap" rel="stylesheet">
+    <!-- Inclure D3.js -->
+    <script src="https://d3js.org/d3.v7.min.js"></script>
+    <!-- Styles CSS -->
+    <style>
+        body {
+            font-family: 'IBM Plex Sans', sans-serif;
+            margin: 20px;
+        }
+
+        #chart-title {
+            font-size: 24px;
+            text-align: center;
+            margin-bottom: 20px;
+        }
+
+        .toggle-container {
+            display: flex;
+            justify-content: center;
+            margin-bottom: 20px;
+        }
+
+        .toggle-button {
+            cursor: pointer;
+            font-size: 16px;
+            padding: 10px 20px;
+            background-color: #007bff;
+            color: white;
+            border: none;
+            border-radius: 5px;
+        }
+
+        .tooltip {
+            position: absolute;
+            text-align: left;
+            padding: 8px;
+            background: rgba(0, 0, 0, 0.7);
+            color: #fff;
+            border-radius: 4px;
+            pointer-events: none;
+            opacity: 0;
+            transition: opacity 0.2s;
+            font-size: 14px;
+            font-family: 'IBM Plex Sans', sans-serif;
+        }
+    </style>
+</head>
+<body>
+
+    <div id="chart-title">Toutes communes confondues</div>
+    <div class="toggle-container">
+        <button class="toggle-button" id="toggleButton">Par types urbain-rural</button>
+    </div>
+
+    <div id="chart"></div>
+
+    <!-- Script JavaScript -->
+    <script src="script.js"></script>
+</body>
+</html>

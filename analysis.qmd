@@ -24,12 +24,16 @@ editor: visual
 library(tidyverse)
 library(tidylog)
 library(readr)
-
+library(DT)
+library(ggbeeswarm)
+library(plotly)
+library(sf)
+library(mapview)
 ```
 
 # Data import
 
-Fonction de l'import
+## Fonction de l'import
 
 ```{r}
 
@@ -73,10 +77,140 @@ import_selected_files <- function(directory) {
 
 ```
 
-Appel de la fonction
+## Appel de la fonction
 
 ```{r}
 # Utilisation de la fonction
 # Assurez-vous de spécifier le bon répertoire
 objets_importes <- import_selected_files("data_input")
+```
+
+# Import des géodonnées
+
+```{r}
+
+g1g24_sf <- read_sf("data_input/g1g24.gpkg")
+```
+
+# Analyse
+
+## Sélection de la catégorie 3 niveaux
+
+```{r}
+
+spatial_division_urbain_rural <- spatial_division_2024_03_01 %>%
+  select(CODE_OFS, HR_GDETYP2012_L1, HR_GDETYP2012_L1_Name_fr)
+```
+
+## Liste des unités spatiales
+
+```{r}
+
+list_bfsnum_urbain <- spatial_division_urbain_rural %>% 
+  filter(HR_GDETYP2012_L1 == 1) %>% 
+  pull(CODE_OFS)
+
+list_bfsnum_rural <- spatial_division_urbain_rural %>% 
+  filter(HR_GDETYP2012_L1 == 3) %>% 
+  pull(CODE_OFS)
+
+list_bfsnum_intermediaire <- spatial_division_urbain_rural %>% 
+  filter(HR_GDETYP2012_L1 == 2) %>% 
+  pull(CODE_OFS)
+```
+
+## Sélection de votations types
+
+```{r}
+
+df_votes_2021_06_13_municipalities %>%  group_by(ballot_id, ballot_name) %>%  summarise() %>%  DT::datatable()
+```
+
+## Merge avec les catégories
+
+```{r}
+
+df_votes_pesticide <- df_votes_2021_06_13_municipalities %>%
+  filter(
+    ballot_id %in% c(6410, 6420)
+  ) %>% 
+  left_join(
+    spatial_division_urbain_rural, by = c("id" = "CODE_OFS")
+  ) %>%
+  filter(!
+    is.na(HR_GDETYP2012_L1_Name_fr)
+  ) %>% 
+  split(
+    .$ballot_id
+  )
+  
+```
+
+## Visualisation
+
+Test avec d3
+
+```{r}
+
+df_votes_pesticide$`6410` %>% 
+  select(name, HR_GDETYP2012_L1_Name_fr, yes_pct, voters) %>% 
+  write_csv("data_output/votes_6410_data.csv")
+```
+
+#### Test avec ggplot
+
+```{r}
+
+beeswarm_test_1 <- ggplot(df_votes_pesticide$`6410`, aes(x = HR_GDETYP2012_L1_Name_fr, y = yes_pct, size = log10(voters), color = HR_GDETYP2012_L1_Name_fr)) +
+  geom_beeswarm(alpha = 0.3) +
+  theme_minimal() +
+  labs(
+    title = "Répartition des votes pour l'initiative «Pour une eau potable propre et une alimentation saine»",
+    x = "Type de commune",
+    y = "Pourcentage de 'Oui'",
+    size = "Nombre d'électeurs"
+  )
+
+ggplotly(beeswarm_test_1)
+```
+
+```{r}
+
+beeswarm_test_1 <- ggplot(df_votes_pesticide$`6410`, aes(x = HR_GDETYP2012_L1_Name_fr, y = yes_pct, size = sqrt(voters), color = HR_GDETYP2012_L1_Name_fr)) +
+  geom_quasirandom(alpha = 0.6, method = "pseudorandom") +
+  scale_size_continuous(range = c(0.5, 5)) +  # Ajustement de l'échelle de taille
+  theme_minimal() +
+  labs(
+    title = "Répartition des votes pour l'initiative «Pour une eau potable propre et une alimentation saine»",
+    x = "Type de commune",
+    y = "Pourcentage de 'Oui'",
+    size = "Nombre d'électeurs"
+  )
+
+  ggplotly(beeswarm_test_1)
+```
+
+```{r}
+
+beeswarm_test_1 <- ggplot(df_votes_pesticide$`6410`, 
+                          aes(x = HR_GDETYP2012_L1_Name_fr, 
+                              y = yes_pct, 
+                              size = sqrt(voters), 
+                              color = HR_GDETYP2012_L1_Name_fr, 
+                              text = paste("Commune: ", name, "<br>Oui %: ", yes_pct, "<br>Voters: ", voters))) +
+  geom_quasirandom(alpha = 0.6, method = "pseudorandom") +
+  scale_size_continuous(range = c(0.5, 5)) +  # Ajustement de l'échelle de taille
+  theme_minimal() +
+  labs(
+    title = "Répartition des votes pour l'initiative «Pour une eau potable propre et une alimentation saine»",
+    x = "Type de commune",
+    y = "Pourcentage de 'Oui'",
+    size = "Nombre d'électeurs"
+  )
+
+# Convertir en ggplotly avec le texte des communes
+plotly_test <- ggplotly(beeswarm_test_1, tooltip = "text")
+
+plotly_test
+
 ```

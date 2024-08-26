@@ -61,7 +61,7 @@ get_data_votes <- function(data) {
   
   # Extraire la date de la votation et la formater
   vote_date <- as.Date(data$abstimmtag, format="%Y%m%d")
-  formatted_date <- format(vote_date, "%Y-%m-%d")
+  formatted_date <- format(vote_date, "%Y_%m_%d")
   
   # Fonction interne pour extraire les résultats des communes
   get_BFS_municipalities_results <- function(data) {
