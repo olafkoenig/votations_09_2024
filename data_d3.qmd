@@ -1,0 +1,375 @@
+---
+title: "Data_for_d3"
+author: "Olaf König"
+format: 
+  html:
+    self-contained: TRUE
+    page-layout: full
+    toc: true
+    toc-depth: 4
+    number-sections: true
+    number-depth: 4
+    code-line-numbers: true
+    code-fold: true
+execute:
+  warning: false
+theme: cosmo 
+editor: visual
+---
+
+# Libraries
+
+```{r}
+
+libs <- c(
+    "tidyverse", "tidylog", "sf", "transformr",
+    "tweenr", "particles", "igraph",
+    "tidygraph", "stringr", "hrbrthemes", "magick",
+    "ggbeeswarm", "plotly", "rmapshaper", "mapview",
+    "geojsonio"
+)
+
+# install missing libraries
+installed_libs <- libs %in% rownames(installed.packages())
+if (any(installed_libs == F)) {
+    install.packages(libs[!installed_libs])
+}
+
+# load libraries
+invisible(lapply(libs, library, character.only = T))
+```
+
+# Data import
+
+### Spatial division
+
+```{r}
+
+spatial_division <- read_csv("data_input/spatial_division_2024_03_01.csv")
+
+cols_to_check <- spatial_division %>% 
+  select(HR_AGGL2012:HR_STADTE2020_Name_fr) %>% 
+  names()
+
+spatial_division_urbain_rural <- spatial_division %>%
+  select(CODE_OFS,
+         HR_GDETYP2012_L1,
+         HR_GDETYP2012_L1_Name_fr,
+         HR_GDETYP2012_L2,
+         HR_GDETYP2012_L2_Name_fr,
+         HR_SPRGEB2020, 
+         HR_SPRGEB2020_Name_fr
+         ) %>% 
+  mutate(HR_GDETYP2012_L1_Name_fr = if_else(
+    HR_GDETYP2012_L1_Name_fr == "Intermédiaire (périurbain dense et centres ruraux)",
+    "Intermédiaire",
+    HR_GDETYP2012_L1_Name_fr
+  ))
+
+
+# FACTORISATION
+ordre_levels_GDETYP2012_L1 <- c(
+  "Urbain",
+  "Intermédiaire",
+  "Rural"
+)
+
+# Facteurs 9 Types
+ordre_levels_GDETYP2012_L2 <- c(
+  "Commune urbaine d’une grande agglomération", 
+  "Commune urbaine d'une agglomération moyenne", 
+  "Commune urbaine d’une petite ou hors agglomération", 
+  "Commune périurbaine de forte densité", 
+  "Commune périurbaine de moyenne densité", 
+  "Commune périurbaine de faible densité", 
+  "Commune d’un centre rural", 
+  "Commune rurale en situation centrale", 
+  "Commune rurale périphérique"
+)
+
+spatial_division_urbain_rural <- spatial_division_urbain_rural %>% 
+  mutate(
+        # Factoriser la colonne HR_GDETYP2012_L1_Name_fr
+    HR_GDETYP2012_L1_Name_fr = factor(HR_GDETYP2012_L1_Name_fr, 
+                                      levels = ordre_levels_GDETYP2012_L1, 
+                                      ordered = TRUE),
+    
+    # Factoriser la colonne HR_GDETYP2012_L2_Name_fr
+    HR_GDETYP2012_L2_Name_fr = factor(HR_GDETYP2012_L2_Name_fr, 
+                                      levels = ordre_levels_GDETYP2012_L2, 
+                                      ordered = TRUE)
+  )
+
+```
+
+## Données politiques - toutes les votations
+
+```{r}
+
+# Data import
+results <- read_rds("data_input/results_all.rds")
+
+# Sélection des données des communes
+municipalities_results <- lapply(results, function(x) x$df_municipalities)
+municipalities_results_df <- bind_rows(municipalities_results) %>% 
+  mutate(id = as.numeric(id)) %>% 
+  left_join(spatial_division_urbain_rural, by = c("id" = "CODE_OFS"))
+```
+
+### Données politiques - Initiative populaire «Pour une Suisse libre de pesticides de synthèse»
+
+```{r}
+
+pesticides_df <- municipalities_results_df %>% 
+  filter(ballot_id == 6420) %>% 
+  select(
+    id, yes_pct, valid_votes
+  ) %>% 
+  rename(
+    GMDNR = id
+  )
+```
+
+### Geodata
+
+```{r}
+
+# Communes
+polg_sf <- read_sf("data_input/g1g24.gpkg") %>% 
+  select(GMDNR, GMDNAME) %>%
+  mutate(
+    entity = "COMMUNE"
+  ) %>% 
+  st_transform(2056)
+
+# Lacs
+lake_sf <- read_sf("data_input/g1s24.gpkg") %>% 
+  select(GMDNR, GMDNAME) %>% 
+  mutate(
+    entity = "LAKE"
+  ) %>% 
+  st_transform(2056)
+
+# Assemblage
+geodata_sf <- rbind(polg_sf, lake_sf)
+```
+
+### Process Geodata (simplification, ajout des divisions spaciales)
+
+```{r}
+
+# Généralisation de la géométrie
+geodata_simplify_sf <- ms_simplify(geodata_sf, keep = 0.1, method = "vis")
+
+# Ajout des attributs de divisions spatiales
+geodata_simplify_sf <- geodata_simplify_sf %>% 
+  left_join(spatial_division_urbain_rural,
+            by = c("GMDNR" = "CODE_OFS"))
+
+# Où sont les NAs? Les lacs et les communanz (ID = 2391, 5391)
+geodata_na <- geodata_simplify_sf %>% filter(is.na(HR_GDETYP2012_L1_Name_fr)) %>%  print()
+
+# J'enlève les Communanz'
+geodata_simplify_sf <- geodata_simplify_sf %>% 
+  filter(!GMDNR %in% c(2391, 5391))
+```
+
+### Process Geodata (ajout des votations)
+
+```{r}
+
+gd_votation <- geodata_simplify_sf %>% 
+  left_join(pesticides_df) %>% 
+  select(GMDNR, GMDNAME, HR_GDETYP2012_L1_Name_fr, yes_pct, valid_votes, entity)
+```
+
+### Process Geodata (split des communes et des lacs et sélection des variables)
+
+```{r}
+
+
+gd_votation_split <- split(gd_votation, gd_votation$entity)
+
+gd_votation_commune <- gd_votation_split$COMMUNE %>% 
+  select(-entity)
+gd_votation_lac <- gd_votation_split$LAKE %>% 
+  select(GMDNR, GMDNAME)
+```
+
+### Export de la géométries
+
+```{r}
+
+# Spécifier les fichiesr de sorties
+fichier1 <- "data_output/gd_votation_commune.geojson"
+fichier2 <- "data_output/gd_votation_lac.geojson"
+
+# Export des communes
+gd_votatation_commune %>%
+  st_transform(4326) %>%
+  write_sf(fichier1)
+
+# Export des lacs
+gd_votatation_lac %>%
+  st_transform(4326) %>%
+  write_sf(fichier2) 
+
+
+# -----
+# COMMANDE POUR TRANSFORMER EN TOPOJSON EN UTILISANT MAPSHAPER NODE JS
+# mapshaper_command <- "mapshaper"
+# args <- c("data_output/gd_votation.geojson", "-o", "format=topojson", "data_output/gd_votation.topojson")
+
+# Exécuter la commande
+# output <- system2(mapshaper_command, args, stdout = TRUE, stderr = TRUE)
+# cat(output, sep = "\n")
+```
+
+## Combiner les fichiers avec CLI Mapshaper
+
+```{r}
+
+# Spécifier les chemins des fichiers GeoJSON
+
+fichier_sortie <- "data_output/gd_votation_combined.geojson"
+
+system2("mapshaper", args = c("-i", "combine-files", fichier1, fichier2, "-o", fichier_sortie), stdout = TRUE, stderr = TRUE)
+
+
+
+```
+
+# Storyboard
+
+## Carte choroplèthe
+
+```{r}
+
+library(RColorBrewer)
+library(classInt)
+library(tmap)
+
+create_choro_map <- function(obj_sf, variable) {
+  # Créer les intervalles de classe entre 0 et 100, par pas de 10
+  breaks <- seq(0, 100, by = 10)
+  
+  # Obtenir la palette de couleurs PiYG avec 10 classes
+  palette_couleurs <- brewer.pal(n = 10, name = "PiYG")
+  
+  # Classifier la variable selon les intervalles définis
+  classes <- classIntervals(obj_sf[[variable]], n = 10, style = "fixed", fixedBreaks = breaks)
+  
+  # Enlever les NA
+  obj_sf <- obj_sf %>% 
+    filter(!is.na(yes_pct))
+  
+  # Créer la carte avec tmap
+  map <- tm_shape(obj_sf) +
+    tm_polygons(
+      col = variable, 
+      palette = palette_couleurs, 
+      breaks = classes$brks,
+      title = paste("Carte de", variable)
+    )
+  
+  return(map)
+}
+
+```
+
+```{r}
+
+tmap_mode("plot")  # Pour une carte statique
+tmap_mode("view")  # Pour une carte interactive
+
+# Création de la map
+create_choro_map(gd_votation, "yes_pct")
+
+```
+
+## Carte en symboles proportionnels
+
+```{r}
+
+library(RColorBrewer)
+library(classInt)
+library(tmap)
+
+create_choro_prop_map <- function(obj_sf, variable, voters) {
+  # Créer les intervalles de classe entre 0 et 100, par pas de 10
+  breaks <- seq(0, 100, by = 10)
+  
+  # Obtenir la palette de couleurs PiYG avec 10 classes
+  palette_couleurs <- brewer.pal(n = 10, name = "PiYG")
+  
+  # Classifier la variable selon les intervalles définis
+  classes <- classIntervals(obj_sf[[variable]], n = 10, style = "fixed", fixedBreaks = breaks)
+  
+  # Enlever les NA
+  obj_sf <- obj_sf %>% 
+    filter(!is.na(yes_pct))
+  
+  # Créer la carte avec tmap en ajoutant des cercles proportionnels
+  map <- tm_shape(obj_sf) +
+    tm_polygons(
+      col = "lightgrey",
+      alpha = 0.3
+    ) +
+    tm_bubbles(
+      size = voters,               # Taille des cercles proportionnelle à la variable 'voters'
+      col = variable,              # Couleur basée sur la même variable que la choroplèthe
+      palette = palette_couleurs,  # Palette de couleurs
+      breaks = classes$brks,       # Utiliser les mêmes coupures pour la classification
+      border.col = "black",        # Bordure noire pour les cercles
+      scale = 3,                 # Ajuster l'échelle des cercles pour une meilleure visualisation
+      title.size = "Nombre d'électeurs",
+      title.col = "Pourcentage de oui"
+    )
+  
+  return(map)
+}
+
+```
+
+```{r}
+
+create_choro_prop_map(gd_votation, "yes_pct", "valid_votes")
+```
+
+## Swarmbee
+
+```{r}
+
+make_swarmbee_plot <- function(df, col_type) {
+  # Appliquer la transformation log10() directement aux données
+  # df$voters_log <- log10(df$voters)
+  
+  df <- df %>% 
+    filter(!is.na(HR_GDETYP2012_L1_Name_fr))
+  # Convertir col_type en symbole pour être utilisé dans aes()
+  col_type_sym <- rlang::ensym(col_type)
+  
+  ggplot(data = df, aes(x = !!col_type_sym, y = yes_pct, size = valid_votes, color = !!col_type_sym)) +
+    geom_beeswarm(alpha = 0.7) +
+    theme_minimal() +
+    labs(
+      title = "Répartition des votes pour l'initiative «Pour une eau potable propre et une alimentation saine»",
+      x = "Type de commune",
+      y = "Pourcentage de 'Oui'",
+      size = "Log du nombre d'électeurs"
+    )
+}
+
+# Exemple d'utilisation
+# make_swarmbee_plot(rothenthurm_sf, "HR_GDETYP2012_L1_Name_fr")
+```
+
+```{r}
+
+make_swarmbee_plot(gd_votation, HR_GDETYP2012_L1_Name_fr)
+```
+
+```{r}
+
+make_swarmbee_plot(gd_votation, HR_GDETYP2012_L2_Name_fr)
+```

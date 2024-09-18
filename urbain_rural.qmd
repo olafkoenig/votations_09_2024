@@ -1,0 +1,370 @@
+---
+title: "All_results_analysis"
+author: "Olaf König"
+
+format: 
+  html:
+    self-contained: TRUE
+    page-layout: full
+    toc: true
+    toc-depth: 4
+    number-sections: true
+    number-depth: 4
+    code-line-numbers: true
+    code-fold: true
+execute:
+  warning: false
+theme: cosmo 
+editor: visual
+---
+
+# Libraries
+
+```{r}
+
+library(jsonlite)
+library(purrr)
+library(tidyverse)
+library(tidylog)
+library(httr)
+library(stringr)
+library(sf)
+library(mapview)
+```
+
+# Data import
+
+## Données des votations
+
+```{r}
+
+# Toutes les données depuis 14.06.1981
+results <- readRDS("data_input/results_all.rds")
+
+# Sélection des données des communes
+municipalities_results <- lapply(results, function(x) x$df_municipalities)
+
+municipalities_results_df <- bind_rows(municipalities_results)
+
+# Géodonnées des communes
+municipalities_geom_sf <- read_sf("data_input/g1g24.gpkg") %>% 
+  select(GMDNR, GMDNAME)
+```
+
+## Données urbain-rural
+
+```{r}
+
+spatial_division <- read_csv("data_input/spatial_division_2024_03_01.csv")
+
+cols_to_check <- spatial_division %>% 
+  select(HR_AGGL2012:HR_STADTE2020_Name_fr) %>% 
+  names()
+
+spatial_division_urbain_rural <- spatial_division %>%
+  select(CODE_OFS,
+         HR_GDETYP2012_L1,
+         HR_GDETYP2012_L1_Name_fr,
+         HR_SPRGEB2020, 
+         HR_SPRGEB2020_Name_fr
+         )
+```
+
+## Leftjoin votations / spatial division
+
+```{r}
+
+# Jointure avec les divisions spatiales
+municipalities_results_df <- municipalities_results_df %>%
+  mutate(
+    id = as.integer(id),
+    vote_date = as.Date(vote_date, format = "%Y_%m_%d")
+  ) %>% 
+  left_join(spatial_division_urbain_rural, by = c("id" = "CODE_OFS"))
+
+# C'est quoi les manquants?
+distinct_names <- municipalities_results_df %>%
+  filter(is.na(HR_GDETYP2012_L1)) %>%
+  distinct(name) %>%
+  pull(name)
+
+# J'enlève les NA
+municipalities_results_df <- municipalities_results_df %>% 
+  filter(!is.na(HR_GDETYP2012_L1))
+```
+
+## Données swissvotes
+
+Le dataset vient de: <https://swissvotes.ch/page/dataset>
+
+```{r}
+swiss_votes <- read.delim("data_input/swissvotes/DATASET CSV 25-08-2024.csv", header = TRUE, sep = ";") %>% 
+  mutate(datum = as.Date(datum, format = "%d.%m.%Y"))
+```
+
+Le codebook, qui donne la code-liste: <https://swissvotes.ch/storage/df216507ec9e78e6873067211f1456aa8125b82483be85046dab7491736fbe36>
+
+On recherche des votations des champs politique (Politikbereich) selon les variables suivantes: (d1e1 / d1e2 / d1e3) et (d2e1 / d2e2 / d2e3) et d3...\
+
+Les codes sont:
+
++---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+--------------------------------------------------------------------------------------------------------------------------+----------------------------------------------------------------------------------------+
+| Politikbereich\                                                                                                                                                                                                                                                                                               | Parteiparolen, Weitere Parolen\                                                                                          | **rechtsform**                                                                         |
+| **d1e1 / d1e2 / d1e3**                                                                                                                                                                                                                                                                                        | **p.xxx**                                                                                                                |                                                                                        |
++---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+--------------------------------------------------------------------------------------------------------------------------+----------------------------------------------------------------------------------------+
+| **5** **Landwirtschaft** 5.1 Agrarpolitik 5.2 Tierische Produktion 5.3 Pflanzliche Produktion 5.4 Forstwirtschaft 5.5 Fischerei, Jagd, Haustiere                                                                                                                                                              | 1 Ja-Parole\                                                                                                             | 1 Obligatorisches Referendum                                                           |
+|                                                                                                                                                                                                                                                                                                               | 2 Nein-Parol                                                                                                             |                                                                                        |
+| **9 Umwelt und Lebensraum** 9.1 Boden 9.1.1 Raumplanung 9.1.2 Bodenrecht 9.2 Wohnen 9.2.1 Mietwesen 9.2.2 Wohnungsbau, Wohneigentum 9.3 Umwelt 9.3.1 Umweltpolitik 9.3.2 Lärmschutz 9.3.3 Luftreinhaltung 9.3.4 Gewässerschutz 9.3.5 Bodenschutz 9.3.6 Abfälle 9.3.7 Natur- und Heimatschutz 9.3.8 Tierschutz |                                                                                                                          | 2 Fakultatives Referendum                                                              |
+|                                                                                                                                                                                                                                                                                                               | 3 Der Akteur beschloss, keine Parole abzugeben                                                                           |                                                                                        |
+|                                                                                                                                                                                                                                                                                                               |                                                                                                                          | 3 Volksinitiative                                                                      |
+|                                                                                                                                                                                                                                                                                                               | 4 Der Akteur empfahl, einen leeren Stimmzettel einzulegen                                                                |                                                                                        |
+|                                                                                                                                                                                                                                                                                                               |                                                                                                                          | 4 Direkter Gegenentwurf zu einer Volksinitiative                                       |
+|                                                                                                                                                                                                                                                                                                               | 5 Der Akteur beschloss Stimmfreigabe                                                                                     |                                                                                        |
+|                                                                                                                                                                                                                                                                                                               |                                                                                                                          | 5 Stichfrage (seit 1987 bei Gegenüberstellung von Volksinitiativen und Gegenentwürfen) |
+|                                                                                                                                                                                                                                                                                                               | 8 Parole auf Bevorzugung des Gegenentwurfs (bei Stichfragen)                                                             |                                                                                        |
+|                                                                                                                                                                                                                                                                                                               |                                                                                                                          |                                                                                        |
+|                                                                                                                                                                                                                                                                                                               | 9 Parole auf Bevorzugung der Volksinitiative (bei Stichfragen)                                                           |                                                                                        |
+|                                                                                                                                                                                                                                                                                                               |                                                                                                                          |                                                                                        |
+|                                                                                                                                                                                                                                                                                                               | 66 Neutral: keine Parole oder Empfehlung auf leer einlegen oder Stimmfreigabe (nur bei Abstimmungen 1848-1969 verwendet) |                                                                                        |
+|                                                                                                                                                                                                                                                                                                               |                                                                                                                          |                                                                                        |
+|                                                                                                                                                                                                                                                                                                               | 9999 Organisation existiert nicht . Unbekannt\                                                                           |                                                                                        |
+|                                                                                                                                                                                                                                                                                                               | \                                                                                                                        |                                                                                        |
+|                                                                                                                                                                                                                                                                                                               | \                                                                                                                        |                                                                                        |
+|                                                                                                                                                                                                                                                                                                               | \                                                                                                                        |                                                                                        |
+|                                                                                                                                                                                                                                                                                                               | ***sbv Schweizer Bauernverband***                                                                                        |                                                                                        |
++---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+--------------------------------------------------------------------------------------------------------------------------+----------------------------------------------------------------------------------------+
+
+: Codebook
+
+## Sélection d'initiatives similaires
+
+```{r}
+
+# Liste des domaines de votations agriculture et environnement
+liste_votations_bereich = c(5.1, 9.1, 9.3)
+
+# Quelles sont les dernières votations qui touchent ces domainies?
+swiss_votes_agri_environnement <- swiss_votes %>% 
+  filter(datum > "1981-06-14") %>% 
+  filter(
+    d1e2 %in% liste_votations_bereich |
+    d2e2 %in% liste_votations_bereich |
+    d3e2 %in% liste_votations_bereich
+  ) %>% 
+  select(anr:titel_kurz_f, rechtsform, p.sbv, annahme, volkja.proz, kt.ja)
+
+# Sélection manuelle des objets de votations
+liste_votations_environnemental <- c(322, 350, 641, 642) * 10
+
+nom_liste_votations_environnemental <- swiss_votes %>%
+  filter(anr %in% (liste_votations_environnemental / 10)) %>%
+           select(anr, titel_kurz_f, bfsmap.fr )
+```
+
+## Sélection des résultats de votations d'initiatives sur la nature et l'environnement
+
+```{r}
+
+# Résultats des votations sur la nature
+votations_nature <- municipalities_results_df %>% 
+  filter(ballot_id %in% liste_votations_environnemental)
+
+
+# Objets séparés SF
+rothenthurm_sf <- municipalities_geom_sf %>%  left_join(
+  municipalities_results_df %>% 
+  filter(ballot_id == 3500), by = c("GMDNR" = "id"))
+
+eau_potable_sf <- municipalities_geom_sf %>%  left_join(
+  municipalities_results_df %>% 
+  filter(ballot_id == 6410), by = c("GMDNR" = "id"))
+
+pesticide_sf <- municipalities_geom_sf %>%  left_join(
+  municipalities_results_df %>% 
+  filter(ballot_id == 6420), by = c("GMDNR" = "id"))
+```
+
+# Data analysis
+
+## Comment les communes ont des tendances similaires sur différentes votations?
+
+```{r}
+library(plotly)
+
+
+# Fonction pour créer des scatterplots interactifs avec couleurs selon une colonne
+creer_scatterplots_facettes <- function(df, liste_votations) {
+  # Filtrer les données pour ne conserver que les votations d'intérêt et ajouter les colonnes de classification
+  df_filtre <- df %>%
+    filter(ballot_id %in% liste_votations) %>%
+    select(id, name, ballot_id, yes_pct, valid_votes, HR_GDETYP2012_L1_Name_fr, HR_SPRGEB2020_Name_fr)
+  
+  # Obtenir toutes les combinaisons uniques (sans répétition vote_x vs vote_y)
+  combinaisons <- combn(liste_votations, 2, simplify = TRUE)
+  
+  # Initialiser une liste pour les plots interactifs
+  interactive_plots <- list()
+
+  for (i in 1:ncol(combinaisons)) {
+    vote_x <- combinaisons[1, i]
+    vote_y <- combinaisons[2, i]
+    
+    # Filtrer les données pour chaque votation (x et y)
+    data_x <- df_filtre %>% filter(ballot_id == vote_x)
+    data_y <- df_filtre %>% filter(ballot_id == vote_y)
+    
+    # Vérifier que les deux jeux de données ne sont pas vides
+    if (nrow(data_x) == 0 | nrow(data_y) == 0) {
+      next  # Ignorer cette combinaison s'il n'y a pas de données
+    }
+    
+    # Joindre les données pour les mêmes communes
+    data_combined <- inner_join(data_x, data_y, by = "id", suffix = c("_x", "_y"))
+    
+    # Vérifier qu'il y a bien des données après la jointure
+    if (nrow(data_combined) == 0) {
+      next  # Ignorer si la jointure ne donne rien
+    }
+
+    # Créer le scatterplot avec ggplot2, en ajoutant les noms des communes, valeurs X et Y dans le hover
+    plot <- ggplot(data_combined, aes(x = yes_pct_x, y = yes_pct_y, size = valid_votes_x,
+                                      text = paste("Commune:", name_x, "<br>Yes % X:", round(yes_pct_x, 2), 
+                                                   "<br>Yes % Y:", round(yes_pct_y, 2), "<br>Votes valides:", valid_votes_x),
+                                      color = HR_SPRGEB2020_Name_fr_x)) +  # Utiliser cette colonne pour les couleurs
+      geom_point(alpha = 0.6) +
+      scale_size_continuous(range = c(1, 10)) + # Ajuster la taille des cercles
+      labs(
+        x = paste("Yes % pour", vote_x),
+        y = paste("Yes % pour", vote_y),
+        size = "Votes valides",
+        color = "Type de Commune"  # Légende des couleurs
+      ) +
+      theme_minimal() +
+      ggtitle(paste("Comparaison entre différentes votations sur la nature/environnement"))
+    
+    # Convertir le ggplot en plotly pour l'interactivité avec les infobulles (tooltip)
+    interactive_plot <- ggplotly(plot, tooltip = "text")
+    
+    # Ajouter le plot interactif dans la liste
+    interactive_plots[[paste(vote_x, vote_y, sep = "_")]] <- interactive_plot
+  }
+  
+  # Utiliser subplot pour créer un small multiple interactif avec plotly
+  combined_plot <- subplot(interactive_plots, nrows = ceiling(sqrt(length(interactive_plots))), titleX = TRUE, titleY = TRUE)
+  
+  return(combined_plot)
+}
+
+
+```
+
+## Utilisation de la fonction
+
+```{r}
+
+# Utilisation de la fonction:
+scatter_plots_facettes <- creer_scatterplots_facettes(votations_nature, liste_votations_environnemental)
+
+# Afficher le plot interactif en small multiples
+scatter_plots_facettes
+```
+
+## Cartographie des votations sélectionnées
+
+Fonction pour créer les cartes
+
+```{r}
+library(RColorBrewer)
+library(classInt)
+
+create_map <- function(obj_sf, variable) {
+  # Créer les intervalles de classe entre 0 et 100, par pas de 10
+  breaks <- seq(0, 100, by = 10)
+  
+  # Obtenir la palette de couleurs PiYG avec 10 classes
+  palette_couleurs <- brewer.pal(n = 10, name = "PiYG")
+  
+  # Classifier la variable selon les intervalles définis
+  classes <- classIntervals(obj_sf[[variable]], n = 10, style = "fixed", fixedBreaks = breaks)
+  
+  # Créer la carte avec mapview
+  mapview(
+    obj_sf, 
+    zcol = variable, 
+    at = classes$brks,   # Utiliser les coupures pour les classes
+    col.regions = palette_couleurs,  # Palette PiYG
+    layer.name = paste("Carte de", variable)
+  )
+}
+```
+
+```{r}
+create_map(rothenthurm_sf, "yes_pct")
+```
+
+```{r}
+
+create_map(eau_potable_sf, "yes_pct")
+
+```
+
+```{r}
+
+create_map(pesticide_sf, "yes_pct")
+
+```
+
+## Moyenne pondérée
+
+```{r}
+# Moyenne pondérée urbain-intermédiaire -rural
+
+urbain_rural <- municipalities_results_df %>%
+  group_by(ballot_id, ballot_name, HR_GDETYP2012_L1, HR_GDETYP2012_L1_Name_fr, vote_date) %>% 
+  summarise(
+    yes_pct_weighted_mean = weighted.mean(yes_pct, voters, na.rm = TRUE),
+    sd = sd(yes_pct))
+  
+```
+
+```{r}
+
+# Représentation graphique avec ggplot2
+
+plot_urbain_rural <- ggplot(urbain_rural %>% 
+         filter(vote_date >= "2020-01-01") %>% 
+         filter(ballot_id %in% liste_votations_environnemental),
+       aes(x = (ballot_id/10), y = yes_pct_weighted_mean, color = HR_GDETYP2012_L1_Name_fr)) +
+  geom_point(size = 3) +  # Points pour représenter les moyennes pondérées
+  geom_errorbar(aes(ymin = yes_pct_weighted_mean - sd, ymax = yes_pct_weighted_mean + sd), width = 0.2) +  # Barres d'erreur pour l'écart-type
+  # facet_wrap(~ HR_GDETYP2012_L1_Name_fr) +  # Facettage selon la classification urbain/rural
+  coord_flip() +  # Inverser les axes pour une meilleure lisibilité
+  labs(
+    title = "Moyennes pondérées du pourcentage de votes OUI par classification (urbain/rural)",
+    x = "Votations",
+    y = "Pourcentage de votes OUI (moyenne pondérée)",
+    color = "Classification"
+  ) +
+  theme_minimal() +  # Thème pour un rendu visuel agréable
+  theme(
+    axis.text.x = element_text(angle = 90, hjust = 1),  # Rotation des étiquettes sur l'axe X
+    strip.text = element_text(size = 8),  # Taille du texte des facettes
+    legend.position = "bottom"  # Positionnement de la légende en bas
+  )
+
+plotly::ggplotly(plot_urbain_rural)
+```
+
+# ANOVA
+
+```{r}
+
+# ANOVA pour comparer les moyennes des votes "oui" entre les catégories
+anova_result <- aov(yes_pct ~ HR_GDETYP2012_L1_Name_fr, data = municipalities_results_df)
+summary(anova_result)
+
+# Test de Kruskal-Wallis si les données ne suivent pas une distribution normale
+kruskal_test <- kruskal.test(yes_pct ~ HR_GDETYP2012_L1_Name_fr, data = municipalities_results_df)
+print(kruskal_test)
+
+```

@@ -1,0 +1,215 @@
+---
+title: "Animation"
+author: "Olaf König"
+format: 
+  html:
+    self-contained: TRUE
+    page-layout: full
+    toc: true
+    toc-depth: 4
+    number-sections: true
+    number-depth: 4
+    code-line-numbers: true
+    code-fold: true
+execute:
+  warning: false
+theme: cosmo 
+editor: visual
+---
+
+# Libraries
+
+```{r}
+
+# libraries we need
+libs <- c(
+    "tidyverse", "tidylog", "sf", "transformr",
+    "tweenr", "particles", "igraph",
+    "tidygraph", "stringr", "hrbrthemes", "magick",
+    "ggbeeswarm", "plotly"
+)
+
+# install missing libraries
+installed_libs <- libs %in% rownames(installed.packages())
+if (any(installed_libs == F)) {
+    install.packages(libs[!installed_libs])
+}
+
+# load libraries
+invisible(lapply(libs, library, character.only = T))
+
+```
+
+# Data import
+
+```{r}
+
+spatial_division <- read_csv("data_input/spatial_division_2024_03_01.csv")
+
+cols_to_check <- spatial_division %>% 
+  select(HR_AGGL2012:HR_STADTE2020_Name_fr) %>% 
+  names()
+
+spatial_division_urbain_rural <- spatial_division %>%
+  select(CODE_OFS,
+         HR_GDETYP2012_L1,
+         HR_GDETYP2012_L1_Name_fr,
+          HR_GDETYP2012_L2,
+         HR_GDETYP2012_L2_Name_fr,
+         HR_SPRGEB2020, 
+         HR_SPRGEB2020_Name_fr
+         )
+```
+
+```{r}
+
+# Geodata
+gd <- read_sf("data_input/g1g24.gpkg")
+
+# Data import
+results <- read_rds("data_input/results_all.rds")
+
+# Sélection des données des communes
+municipalities_results <- lapply(results, function(x) x$df_municipalities)
+municipalities_results_df <- bind_rows(municipalities_results) %>% 
+  mutate(id = as.numeric(id)) %>% 
+  left_join(spatial_division_urbain_rural, by = c("id" = "CODE_OFS"))
+
+vd <- municipalities_results_df %>% 
+  filter(
+    ballot_id == 6420
+  ) %>% 
+  mutate(
+    id = as.numeric(id)
+  )
+
+mapview::mapview(gd %>% left_join(vd, by = c("GMDNR" = "id")),
+                 zcol = "yes_pct")
+```
+
+```{r}
+
+# Objets séparés SF
+rothenthurm_sf <- gd %>%  left_join(
+  municipalities_results_df %>% 
+  filter(ballot_id == 3500), by = c("GMDNR" = "id"))
+
+eau_potable_sf <- gd %>%  left_join(
+  municipalities_results_df %>% 
+  filter(ballot_id == 6410), by = c("GMDNR" = "id"))
+
+pesticide_sf <- gd %>%  left_join(
+  municipalities_results_df %>% 
+  filter(ballot_id == 6420), by = c("GMDNR" = "id"))
+
+```
+
+## Graphique ggplot
+
+### Fonction beeswarm
+
+```{r}
+
+make_swarmbee_plot <- function(df, col_type) {
+  # Appliquer la transformation log10() directement aux données
+  df$voters_log <- log10(df$voters)
+  
+  # Convertir col_type en symbole pour être utilisé dans aes()
+  col_type_sym <- rlang::ensym(col_type)
+  
+  ggplot(data = df, aes(x = !!col_type_sym, y = yes_pct, size = voters_log, color = !!col_type_sym)) +
+    geom_beeswarm(alpha = 0.3) +
+    theme_minimal() +
+    labs(
+      title = "Répartition des votes pour l'initiative «Pour une eau potable propre et une alimentation saine»",
+      x = "Type de commune",
+      y = "Pourcentage de 'Oui'",
+      size = "Log du nombre d'électeurs"
+    )
+}
+
+# Exemple d'utilisation
+make_swarmbee_plot(rothenthurm_sf, "HR_GDETYP2012_L1_Name_fr")
+
+```
+
+## Fonction barchart
+
+```{r}
+
+make_bar_chart <- function(df, col_type) {
+  
+  # Convertir col_type en symbole pour l'utiliser dans les opérations de dplyr et ggplot
+  col_type_sym <- rlang::ensym(col_type)
+  
+  # Process the data
+  df_summary <- df %>%
+    filter(!is.na(!!col_type_sym)) %>%
+    group_by(!!col_type_sym) %>%
+    summarise(
+      mean_simple_yes = mean(yes_pct, na.rm = TRUE),
+      yes = sum(yes, na.rm = TRUE),
+      valid_votes = sum(valid_votes, na.rm = TRUE)
+    ) %>%
+    ungroup() %>%
+    mutate(mean_yes = yes / valid_votes)
+  
+  # Create the bar chart
+  ggplot(data = df_summary, aes(x = mean_yes, y = !!col_type_sym, fill = !!col_type_sym)) +
+    geom_bar(stat = "identity", show.legend = FALSE) +  # Change to "identity" for means
+    theme_minimal() +
+    labs(x = "Mean Simple Yes Percentage", y = "Type", title = "Bar Chart of Mean Simple Yes by Type")
+}
+
+# Exemple d'utilisation
+# make_bar_chart(rothenthurm_sf, "HR_GDETYP2012_L1_Name_fr")
+
+
+```
+
+# Graphiques Urbain-intermédiaire-rural
+
+### Initiative du Rohenturm
+
+```{r}
+
+make_swarmbee_plot(rothenthurm_sf %>%  filter(!is.na(HR_GDETYP2012_L1)), HR_GDETYP2012_L1_Name_fr)
+```
+
+```{r}
+
+make_bar_chart(rothenthurm_sf, HR_GDETYP2012_L1_Name_fr)
+```
+
+### Initiative "Eau potable"
+
+```{r}
+
+make_swarmbee_plot(eau_potable_sf %>%  filter(!is.na(HR_GDETYP2012_L1)), HR_GDETYP2012_L1_Name_fr)
+
+```
+
+```{r}
+
+make_bar_chart(eau_potable_sf, HR_GDETYP2012_L1_Name_fr)
+```
+
+### Initiative contre les pesticides
+
+```{r}
+
+
+make_swarmbee_plot(pesticide_sf, HR_GDETYP2012_L1_Name_fr)
+```
+
+```{r}
+
+make_bar_chart(pesticide_sf, HR_GDETYP2012_L1_Name_fr)
+```
+
+# Graphiques 9 catégories
+
+```{r}
+
+
+```

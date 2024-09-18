@@ -1,0 +1,188 @@
+---
+title: "Votations_all"
+author: "Olaf König"
+format: html
+editor: visual
+---
+
+# Extraction de tous les liens de votations
+
+```{r}
+
+# Charger les packages
+library(rvest)
+library(xml2)
+
+# URL de la page
+url <- "https://opendata.swiss/fr/dataset/echtzeitdaten-am-abstimmungstag-zu-eidgenoessischen-abstimmungsvorlagen"
+
+# Lire le contenu de la page
+page <- read_html(url)
+
+# Extraire tous les liens de téléchargement (liens avec l'attribut href)
+download_links <- page %>%
+  html_nodes("a") %>%
+  html_attr("href") %>%
+  grep(pattern = "dam/assets", value = TRUE)
+
+# Afficher les liens
+download_links
+
+```
+
+# Fonction pour télécharger tous les liens
+
+```{r}
+
+process_votes_data <- function(bfs_url) {
+  # Envoyer la requête GET pour récupérer les données
+  response <- try(GET(bfs_url), silent = TRUE)
+  
+  # Vérifier si la requête a réussi
+  if (inherits(response, "try-error")) {
+    cat("Erreur lors de la récupération des données à partir de l'URL:", bfs_url, "\n")
+    return(NULL)
+  } else if (status_code(response) != 200) {
+    cat("Échec de la requête. Code de statut:", status_code(response), "URL:", bfs_url, "\n")
+    return(NULL)
+  }
+  
+  # Extraire et parser le contenu de la réponse
+  data <- content(response, as = "parsed", type = "application/json")
+  
+  # Retourner les résultats
+  return(data)
+}
+
+```
+
+# Fonction de get data (sans districts)
+
+```{r}
+
+library(dplyr)
+
+get_data_votes <- function(data) {
+  
+  # Extraire la date de la votation et la formater
+  vote_date <- as.Date(data$abstimmtag, format="%Y%m%d")
+  formatted_date <- format(vote_date, "%Y_%m_%d")
+  
+  # Fonction interne pour extraire les résultats des communes
+  get_BFS_municipalities_results <- function(data) {
+    bfs_results <- list()
+    
+    for (ballot in data$schweiz$vorlagen) {
+      for (canton in ballot$kantone) {
+        for (commune in canton$gemeinden) {
+          ballot_name <- NULL
+          for (title in ballot$vorlagenTitel) {
+            if (title$langKey == "fr") {
+              ballot_name <- title$text
+              break
+            }
+          }
+          commune_data <- c(
+            id = commune$geoLevelnummer,
+            name = commune$geoLevelname,
+            canton_id = canton$geoLevelnummer,
+            canton_name = canton$geoLevelname,
+            ballot_id = ballot$vorlagenId,
+            ballot_name = ballot_name,
+            commune$resultat
+          )
+          bfs_results <- append(bfs_results, list(commune_data))
+        }
+      }
+    }
+    
+    df_municipalities <- bind_rows(bfs_results)
+    
+    df_municipalities <- df_municipalities %>%
+      rename(
+        yes_pct = jaStimmenInProzent,
+        yes = jaStimmenAbsolut,
+        no = neinStimmenAbsolut,
+        turnout = stimmbeteiligungInProzent,
+        ballots_returned = eingelegteStimmzettel,
+        voters = anzahlStimmberechtigte,
+        valid_votes = gueltigeStimmen
+      ) %>%
+      select(-gebietAusgezaehlt)
+    
+    # Ajouter la colonne de date formatée
+    df_municipalities <- df_municipalities %>%
+      mutate(vote_date = formatted_date)
+    
+    return(df_municipalities)
+  }
+  
+  # Fonction interne pour extraire les résultats des cantons
+  get_BFS_cantons_results <- function(data) {
+    cantons <- list()
+    
+    for (ballot in data$schweiz$vorlagen) {
+      for (canton in ballot$kantone) {
+        ballot_name <- sapply(ballot$vorlagenTitel, function(title) {
+          if (title$langKey == 'fr') return(title$text)
+        })
+        ballot_name <- unlist(ballot_name)
+        
+        cantons <- append(cantons, list(data.frame(
+          id = canton$geoLevelnummer,
+          name = canton$geoLevelname,
+          canton_id = canton$geoLevelnummer,
+          canton_name = canton$geoLevelname,
+          ballot_id = ballot$vorlagenId,
+          ballot_name = ballot_name,
+          yes = canton$resultat$jaStimmenAbsolut,
+          no = canton$resultat$neinStimmenAbsolut,
+          yes_pct = canton$resultat$jaStimmenInProzent,
+          turnout = canton$resultat$stimmbeteiligungInProzent,
+          ballots_returned = canton$resultat$eingelegteStimmzettel,
+          voters = canton$resultat$anzahlStimmberechtigte,
+          valid_votes = canton$resultat$gueltigeStimmen
+        )))
+      }
+    }
+    
+    df_cantons <- do.call(rbind, cantons)
+    df_cantons <- as.data.frame(df_cantons)
+    
+    # Ajouter la colonne de date formatée
+    df_cantons <- df_cantons %>%
+      mutate(vote_date = formatted_date)
+    
+    return(df_cantons)
+  }
+  
+  # Obtenir les deux dataframes (communes et cantons)
+  df_municipalities <- get_BFS_municipalities_results(data)
+  df_cantons <- get_BFS_cantons_results(data)
+  
+  # Exporter les dataframes en CSV
+  write.csv(df_municipalities, paste0("data_input/df_votes_", formatted_date, "_municipalities.csv"), row.names = FALSE)
+  write.csv(df_cantons, paste0("data_input/df_votes_", formatted_date, "_cantons.csv"), row.names = FALSE)
+  
+  # Retourner une liste avec les dataframes
+  return(list(df_municipalities = df_municipalities, df_cantons = df_cantons))
+}
+
+```
+
+## Récupération de tous les fichiers de votations depuis 1981
+
+```{r}
+
+
+# Boucler sur chaque lien et traiter les données
+json_data_list <- lapply(download_links, process_votes_data)
+
+# Filtrer les objets JSON valides (non NULL)
+valid_json_data_list <- Filter(Negate(is.null), json_data_list)
+
+# Appliquer la fonction get_data_votes à chaque objet JSON valide
+results <- lapply(valid_json_data_list, get_data_votes)
+
+results %>% write_rds("data_input/results_all.rds")
+```

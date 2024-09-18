@@ -2,3 +2,14 @@
 .Rhistory
 .RData
 .Ruserdata
+
+
+# Ignore les fichiers de données et sorties
+data_output/
+data_input/
+d3_maps/
+d3_choropleth/
+
+# Ignore les fichiers générés par Quarto/Markdown
+*.html
+*.pdf
